@@ -525,7 +525,7 @@ void ProcessMusic(void){
 			//process all simultaneous events
 			while(currDeltaTime==nextDeltaTime){
 
-				if(SongBufBytes() < SONG_BUFFER_MINIMUM){
+				if(SongBufBytes() < SONG_BUFFER_MIN){
 					nextDeltaTime++;//we are running out of data, stretch the song a bit longer	to smooth it out		
 					break;
 				}
