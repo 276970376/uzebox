@@ -35,16 +35,7 @@
 #define DEFAULT_TRACK_VOL	0xff
 #define DEFAULT_EXPRESSION_VOL 0xff
 
-#define MIDI_NULL 0xfd
-
-unsigned int ReadVarLen(const char **songPos);
 void SetTriggerCommonValues(Track *track, u8 volume, u8 note);
-
-#if MIDI_IN == 1
-	static long received=0;
-	bool receivingSysEx=false;
-	unsigned char lastMidiInStatus;
-#endif 
 
 extern u8 waves[];
 extern u16 steptable[];
@@ -54,23 +45,45 @@ Track tracks[CHANNELS];
 //Common player vars
 bool playSong=false;
 unsigned char lastStatus;
-const char *songPos; 
-const char *songStart;
-const char *loopStart;
 unsigned char masterVolume;
 u8 songSpeed;
 u8 step;
 
 #if MUSIC_ENGINE == MIDI
-	//MIDI player vars
+	unsigned int ReadVarLen(const char **songPos);
+
+	const char *songPos; 
+	const char *songStart;
+	const char *loopStart;
+	
 	u16	nextDeltaTime;
 	u16	currDeltaTime;
+#elif MUSIC_ENGINE == STREAM
+	unsigned int ReadVarLen();
+	
+	volatile u16 songPos; 
+	volatile u16 loopStart;
+	volatile u16 loopEnd;
+
+	u16 nextDeltaTime;
+	u16 currDeltaTime;
+
+	u8 songBuf[SONG_BUFFER_SIZE];
+	u8 songBufIn, songBufOut;
+
+	u8 SongBufFull();
+	u8 SongBufBytes();
+	void SongBufWrite(u8 t);
+	u8 SongBufRead();
 #else
 	//MOD players vars
 	u8 currentTick;
 	u8 currentStep;
 	u8 modChannels;
 	u8 songLength;
+	const char *songPos; 
+	const char *songStart;
+	const char *loopStart;
 	const u16 *patternOffsets;
 	const char *patterns;
 #endif
@@ -260,11 +273,6 @@ void InitMusicPlayer(const Patch *patchPointersParam){
 
 	masterVolume=DEFAULT_MASTER_VOL;
 
-#if MIDI_IN == ENABLED
-	InitUartRxBuffer();
-	lastMidiInStatus=0;
-#endif
-
 	playSong=false;
 
 	//initialize default channels patches			
@@ -299,7 +307,7 @@ void InitMusicPlayer(const Patch *patchPointersParam){
 		playSong=true;
 	}
 
-#else
+#else if MUSIC_ENGINE == MOD
 
 	void StartSong(const char *song, u16 startPos, bool loop){
 		for(unsigned char t=0;t<CHANNELS;t++){
@@ -368,20 +376,6 @@ void SetSongSpeed(u8 speed){
 u8 GetSongSpeed(){
 	return songSpeed;
 }
-
-#if MIDI_IN == ENABLED
-
-	unsigned char ReadUART(){
-
-		if(UartUnreadCount()!=0){
-			received++;
-			return UartReadChar();
-		}else{
-			return MIDI_NULL; //equivalent no NULL
-		}
-	}
-
-#endif
 
 
 void ProcessMusic(void){
@@ -460,9 +454,7 @@ void ProcessMusic(void){
 					if(c1&0x80) lastStatus=c1;					
 					channel=lastStatus&0x0f;
 				
-					//get next data byte
-					//Note: maybe we should not advance the cursor
-					//in case we receive an unsupported command				
+					//get next data byte		
 					if(c1&0x80) c1=pgm_read_byte(songPos++); 
 
 					switch(lastStatus&0xf0){
@@ -528,7 +520,109 @@ void ProcessMusic(void){
 		
 			currDeltaTime++;
 	
-		#else
+		#elif MUSIC_ENGINE == STREAM
+		
+			//process all simultaneous events
+			while(currDeltaTime==nextDeltaTime){
+
+				if(SongBufBytes() < SONG_BUFFER_MINIMUM){
+					nextDeltaTime++;//we are running out of data, stretch the song a bit longer	to smooth it out		
+					break;
+				}
+				c1=SongBufRead();
+			
+				if(c1==0xff){
+					//META data type event
+					c1=SongBufRead();
+
+				
+					if(c1==0x2f){ //end of song
+						playSong=false;
+						break;	
+					}else if(c1==0x6){ //marker
+						c1=SongBufRead() //read len
+						c2=SongBufRead() //read data
+						if(c2=='S'){ //loop start
+							loopStart=songPos;
+						}else if(c2=='E'){//loop end
+							loopEnd=songPos;
+							songPos=loopStart;
+						}
+					}
+				
+
+				}else{
+
+					if(c1&0x80) lastStatus=c1;					
+					channel=lastStatus&0x0f;
+				
+					//get next data byte			
+					if(c1&0x80) c1=SongBufRead(); 
+
+					switch(lastStatus&0xf0){
+
+						//note-on
+						case 0x90:
+							//c1 = note						
+							c2=SongBufRead()<<1; //get volume
+						
+							if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED){ //allocated==true
+								TriggerNote(channel,tracks[channel].patchNo,c1,c2);
+							}
+							break;
+
+						//controllers
+						case 0xb0:
+							///c1 = controller #
+							c2=SongBufRead(); //get controller value
+						
+							if(c1==CONTROLER_VOL){
+								tracks[channel].trackVol=c2<<1;
+							}else if(c1==CONTROLER_EXPRESSION){
+								tracks[channel].expressionVol=c2<<1;
+							}else if(c1==CONTROLER_TREMOLO){
+								tracks[channel].tremoloLevel=c2<<1;
+							}else if(c1==CONTROLER_TREMOLO_RATE){
+								tracks[channel].tremoloRate=c2<<1;
+							}
+						
+							break;
+
+						//program change
+						case 0xc0:
+							// c1 = patch #						
+							tracks[channel].patchNo=c1;
+							break;
+
+					}//end switch(c1&0xf0)
+
+
+				}//end if(c1==0xff)
+
+				//read next delta time
+				nextDeltaTime=ReadVarLen();			
+				currDeltaTime=0;
+		
+				#if SONG_SPEED == 1
+					if(songSpeed != 0){
+						uint32_t l  = (uint32_t)(nextDeltaTime<<8);
+
+						if(songSpeed < 0){//slower
+							(uint32_t)(l += (uint32_t)(-songSpeed*(nextDeltaTime<<1)));
+							(uint32_t)(l >>= 8);
+						}
+						else//faster
+							(uint32_t)(l /= (uint32_t)((1<<8)+(songSpeed<<1)));
+
+						nextDeltaTime = l;
+					}
+				#endif
+
+			}//end while
+		
+			currDeltaTime++;
+		
+		#else //MOD
 			
 
 			u8 patternNo,data, note,data2,flags;
@@ -648,130 +742,6 @@ void ProcessMusic(void){
 
 
 
-	#if MIDI_IN == ENABLED
-
-		// PROCESS MIDI-IN
-		//
-
-		bool done=false;
-
-		while(!done){
-
-			c1=ReadUART();
-			if(c1==MIDI_NULL)break;
-
-
-			if(c1<0xf0){//ignore real-time messages
-
-				if(c1&0x80)lastMidiInStatus=c1;					
-				channel=c1&0x0f;
-
-				switch(c1&0xf0){
-
-					//note-on
-					case 0x90:
-						if(UartUnreadCount()<2){
-							done=true;
-							UartGoBack(1);
-						}else{
-							c1=ReadUART(); //get note
-							c2=ReadUART()<<1; //get volume															
-							if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED){
-								TriggerNote(channel,tracks[channel].patchNo,c1,c2);
-							}
-						}
-						break;
-
-					//controllers
-					case 0xb0:
-						if(UartUnreadCount()<2){
-							done=true;
-							UartGoBack(1);
-						}else{
-							c1=ReadUART(); //get controller #
-							c2=ReadUART(); //get value
-							
-							if(c1==CONTROLER_VOL){
-								tracks[channel].trackVol=c2<<1;
-							}else if(c1==CONTROLER_EXPRESSION){
-								tracks[channel].expressionVol=c2<<1;
-							}else if(c1==CONTROLER_TREMOLO){
-								tracks[channel].tremoloLevel=c2<<1;
-							}else if(c1==CONTROLER_TREMOLO_RATE){
-								tracks[channel].tremoloRate=c2<<1;
-							}
-
-						}							
-						break;
-
-					//program change
-					case 0xc0:
-						if(UartUnreadCount()<1){
-							done=true;
-							UartGoBack(1);
-						}else{
-							c1=ReadUART(); //get patch
-							if(c1==80)c1=8;
-							tracks[channel].patchNo=c1;								
-						}						
-						break;							
-
-					//running status
-					default:
-						channel=lastMidiInStatus&0x0f;
-
-						switch(lastMidiInStatus&0xf0){
-
-							//note-on
-							case 0x90:
-								if(UartUnreadCount()<1){
-									done=true;
-									UartGoBack(1);
-								}else{
-									c2=ReadUART()<<1; //get volume
-									if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED){
-										TriggerNote(channel,tracks[channel].patchNo,c1,c2);
-									}
-								}
-								break;
-
-							//controllers
-							case 0xb0:
-								if(UartUnreadCount()<1){
-									done=true;
-									UartGoBack(1);
-								}else{
-									c2=ReadUART(); //get value								
-									
-									if(c1==CONTROLER_VOL){
-										tracks[channel].trackVol=c2<<1;
-									}else if(c1==CONTROLER_EXPRESSION){
-										tracks[channel].expressionVol=c2<<1;
-									}else if(c1==CONTROLER_TREMOLO){
-										tracks[channel].tremoloLevel=c2<<1;
-									}else if(c1==CONTROLER_TREMOLO_RATE){
-										tracks[channel].tremoloRate=c2<<1;
-									}
-								}
-								break;
-						
-							//program change
-							case 0xc0:
-								if(c1==80)c1=8;
-								tracks[channel].patchNo=c1;
-								break;											
-						
-						}
-
-				}
-
-			}
-
-		}
-		
-	#endif
-
-
 	//
 	// Process patches command streams & final volume
 	//
@@ -864,6 +834,8 @@ void ProcessMusic(void){
 
 
 
+#if MUSIC_ENGINE == MIDI
+
 unsigned int ReadVarLen(const char **songPos)
 {
     unsigned int value;
@@ -882,6 +854,62 @@ unsigned int ReadVarLen(const char **songPos)
 
     return value;
 }
+
+#elif MUSIC_ENGINE == MOD
+
+
+
+#else //STREAM
+
+unsigned int ReadVarLen()
+{
+    unsigned int value;
+    unsigned char c;
+
+
+    if ( (value = SongBufRead()) & 0x80 )
+    {
+       value &= 0x7F;
+       do
+       {
+         value = (value << 7) + ((c = SongBufRead()) & 0x7F);
+       } while (c & 0x80);
+    }
+
+
+    return value;
+}
+
+
+u8 SongBufFull(){
+	return(songBufOut == ((songBufIn+1)%sizeof(songBuf)));
+}
+
+
+u8 SongBufBytes(){
+	if(songBufIn > songBufOut)
+		return songBufIn-songBufOut;
+	else
+		return (songBufIn+sizeof(songBuf))-songBufOut;
+}
+
+
+void SongBufWrite(u8 t){//writes a byte into the circular buffer
+
+	songBuf[songBufIn] = t;
+	songBufIn = ((songBufIn+1)%sizeof(songBuf));
+}
+
+
+u8 SongBufRead(){
+	
+	uint8_t t = songBuf[songBufOut];
+	songBufOut = ((songBufOut+1)%sizeof(songBuf));
+	songPos++;
+	return t;
+}
+
+#endif
 
 
 
