@@ -85,8 +85,9 @@
 	#define MIXER_TYPE_VSYNC 	0
 	#define MIXER_TYPE_INLINE	1
 
-	#define MIDI 0
-	#define MOD	 1
+	#define MIDI		0
+	#define MOD		1
+	#define STREAM		2
 
  	/*
 	 * Defines the video mode to use. 
