@@ -66,7 +66,7 @@ u8 step;
 	volatile u16 loopEnd;
 
 	u16 nextDeltaTime;
-	u16 currDeltaTime;
+	//u16 currDeltaTime;
 
 	u8 songBuf[SONG_BUFFER_SIZE];
 	u8 songBufIn, songBufOut;
@@ -307,7 +307,7 @@ void InitMusicPlayer(const Patch *patchPointersParam){
 		playSong=true;
 	}
 
-#else if MUSIC_ENGINE == MOD
+#elif MUSIC_ENGINE == MOD
 
 	void StartSong(const char *song, u16 startPos, bool loop){
 		for(unsigned char t=0;t<CHANNELS;t++){
@@ -523,87 +523,58 @@ void ProcessMusic(void){
 		#elif MUSIC_ENGINE == STREAM
 		
 			//process all simultaneous events
-			while(currDeltaTime==nextDeltaTime){
-
+			if(nextDeltaTime)//eat last frames delay
+				nextDeltaTime--;
+			while(!nextDeltaTime){
+				
 				if(SongBufBytes() < SONG_BUFFER_MIN){
-					nextDeltaTime++;//we are running out of data, stretch the song a bit longer	to smooth it out		
+					nextDeltaTime++;//we are running out of data, stretch the timing a bit		
 					break;
 				}
 				c1=SongBufRead();
-			
-				if(c1==0xff){
-					//META data type event
-					c1=SongBufRead();
 
-				
-					if(c1==0x2f){ //end of song
-						playSong=false;
-						break;	
-					}else if(c1==0x6){ //marker
-						c1=SongBufRead() //read len
-						c2=SongBufRead() //read data
-						if(c2=='S'){ //loop start
-							loopStart=songPos;
-						}else if(c2=='E'){//loop end
-							loopEnd=songPos;
-							songPos=loopStart;
+				if(c1 & 0b10000000){//Note On or Program Change or Song End
+					if(c1 == 0xFF){//Song End
+						playSong = false;
+						break;
+					}else{
+						channel = (c1 & 0b01110000)>>4;
+						if(channel < 5){//if channel is 0-4, then it is a Note On
+							if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED)//allocated==true
+								TriggerNote(channel,tracks[channel].patchNo,c1,c2);
+						}else{//"channel" > 4, Program Change
+							c2 = (c1 & 0b00001111);//extract patch
+							channel -= 4;//remove signaling offset
+							if(c2 == 15)//long form, actual patch is determined by next byte
+								c2 = SongBufRead();		
+							tracks[channel].patchNo = c2;
 						}
 					}
-				
-
-				}else{
-
-					if(c1&0x80) lastStatus=c1;					
-					channel=lastStatus&0x0f;
-				
-					//get next data byte			
-					if(c1&0x80) c1=SongBufRead(); 
-
-					switch(lastStatus&0xf0){
-
-						//note-on
-						case 0x90:
-							//c1 = note						
-							c2=SongBufRead()<<1; //get volume
-						
-							if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED){ //allocated==true
-								TriggerNote(channel,tracks[channel].patchNo,c1,c2);
-							}
+				}else{// not Note On or Program Change or Song End
+					if(c1 == 0b01110000){//Loop Start
+						loopStart = songPos;
+					}else if(c1 == 0b01110001){//Loop End
+						songPos = loopStart;
+					}else{//one of three possible forms for Tick End events or Expansion
+						if(c1 == 0b01110011){//short form for 1 frame delay
+							nextDeltaTime++;
+						}else if(c1 == 0b01110111){//delay specified by next byte
+							nextDeltaTime = songBufRead();
+						}else if(c1 == 0b01111111){//future expansion
+							playSong = false;//currently unsupported, unknown number of bytes to follow
 							break;
-
-						//controllers
-						case 0xb0:
-							///c1 = controller #
-							c2=SongBufRead(); //get controller value
-						
-							if(c1==CONTROLER_VOL){
-								tracks[channel].trackVol=c2<<1;
-							}else if(c1==CONTROLER_EXPRESSION){
-								tracks[channel].expressionVol=c2<<1;
-							}else if(c1==CONTROLER_TREMOLO){
-								tracks[channel].tremoloLevel=c2<<1;
-							}else if(c1==CONTROLER_TREMOLO_RATE){
-								tracks[channel].tremoloRate=c2<<1;
-							}
-						
+						}else{//delay specified by next 2 bytes
+							nextDeltaTime = songBufRead()<<8;
+							nextDeltaTime |= songBufRead();
 							break;
-
-						//program change
-						case 0xc0:
-							// c1 = patch #						
-							tracks[channel].patchNo=c1;
-							break;
-
-					}//end switch(c1&0xf0)
-
-
-				}//end if(c1==0xff)
-
-				//read next delta time
-				nextDeltaTime=ReadVarLen();			
-				currDeltaTime=0;
+						}
+					}
+				}
 		
 				#if SONG_SPEED == 1
+					if(!nextDeltaTime)
+						continue;
+
 					if(songSpeed != 0){
 						uint32_t l  = (uint32_t)(nextDeltaTime<<8);
 
@@ -620,7 +591,7 @@ void ProcessMusic(void){
 
 			}//end while
 		
-			currDeltaTime++;
+			//currDeltaTime++;
 		
 		#else //MOD
 			
