@@ -1,5 +1,5 @@
 /*
- *  Uzebox(tm) Packrom utility
+ *  Uzebox(tm) Mconvert utility
  *  2017 Lee Weber
  *
  *  This program is free software: you can redistribute it and/or modify
