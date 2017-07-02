@@ -53,6 +53,7 @@ unsigned char loopBuf[256];
 #define FILTER_EXPRESSION	2
 #define FILTER_TREMOLO_VOLUME	4
 #define FILTER_TREMOLO_RATE	8
+#define FILTER_NOTE_OFF		16
 
 int ConvertAndWrite();
 
@@ -77,6 +78,7 @@ int main(int argc, char *argv[]){
 		printf("\t\t\t\t2 : remove Expression controllers\n");
 		printf("\t\t\t\t4 : remove Tremolo Volume controllers\n");
 		printf("\t\t\t\t8 : remove Tremolo Rate controllers\n");
+		printf("\t\t\t\t16 : remove note off events(volume 0)\n");
 		printf("\t\t\t\tie. : \"-f 1 removes Channel Volume,\n");
 		printf("\t\t\t\t\"-f 15\" or \"-f 255\" removes all\n");
 		goto DONE;
@@ -233,8 +235,10 @@ w = 0;
 					/* 0b1CCCVVVV, 0bVNNNNNNN */
 					c2 = inBuf[i++];/* c2 = 7 bit volume */
 					c2 >>= 1; /* convert to 6 bit volume used in the compressed format */
-					outBuf[outSize++] = (channel<<5) | (c2 & 0b00011111);/* 0bCCCVVVVV */
-					outBuf[outSize++] = ((c2 & 0b00100000)<<2) | (c1 & 0b01111111);/* 0bVNNNNNNN MSBit of volume*/
+					if(c2 || !(ctrFilter & FILTER_NOTE_OFF)){/* Note Off is a Note On with volume 0 */
+						outBuf[outSize++] = (channel<<5) | (c2 & 0b00011111);/* 0bCCCVVVVV */
+						outBuf[outSize++] = ((c2 & 0b00100000)<<2) | (c1 & 0b01111111);/* 0bVNNNNNNN MSBit of volume*/
+					}					
 					break;
 
 				case 0xB0:/* controller, c1 = type, 2 bytes */
@@ -272,7 +276,9 @@ w = 0;
 						outBuf[outSize++] = 0b10100000 | channel;/*0b10100CCC*/
 						outBuf[outSize++] = c1; /* patch */
 					break;
-									
+				default:
+					printf("Error: Got unknown controller\n");
+					return -1;					
 			}/* end switch(lastStatus & 0x0F) */
 		}/* end else(c1 != 0xFF) */
 
