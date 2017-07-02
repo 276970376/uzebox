@@ -167,19 +167,6 @@
 	#ifndef SNES_MOUSE
 		#define SNES_MOUSE 0
 	#endif
-	
-	/*
-	 * Activates the MIDI-IN support. 
-	 * Not supported with video mode 2.
-	 *
-	 * 0 = no
-	 * 1 = yes
-	 */
-	#ifndef MIDI_IN
-		#define MIDI_IN 0
-	#elif MIDI_IN == 1
-		#define UART 1
-	#endif
 
 	/*
 	 * Activates the UART receive and transmit ring buffers

@@ -103,10 +103,10 @@
 		extern u8 SongBufBytes();
 		extern u8 SongBufFull();
 		#ifndef SONG_BUFFER_SIZE	
-			#define SONG_BUFFER_SIZE	24
+			#define SONG_BUFFER_SIZE	32
 		#endif
 		#ifndef SONG_BUFFER_MIN
-			#define SONG_BUFFER_MIN		SONG_BUFFER_SIZE/4
+			#define SONG_BUFFER_MIN		2
 		#endif
 	#else // MOD
 		extern void StartSong(const char *song, u16 startPos, bool loop);

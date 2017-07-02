@@ -50,6 +50,7 @@ u8 songSpeed;
 u8 step;
 
 #if MUSIC_ENGINE == MIDI
+
 	unsigned int ReadVarLen(const char **songPos);
 
 	const char *songPos; 
@@ -60,13 +61,13 @@ u8 step;
 	u16	currDeltaTime;
 
 #elif MUSIC_ENGINE == STREAM
-	unsigned int ReadVarLen();
-	
-	volatile u16 songPos; 
+
+	volatile u16 songPos;
+	u16 songStart;
 	volatile u16 loopStart;
 	volatile u16 loopEnd;
 
-	u16 nextDeltaTime;
+	u8 nextDeltaTime;
 	//u16 currDeltaTime;
 
 	u8 songBuf[SONG_BUFFER_SIZE];
@@ -77,8 +78,8 @@ u8 step;
 	void SongBufWrite(u8 t);
 	u8 SongBufRead();
 
-#else
-	//MOD players vars
+#else //MOD player
+
 	u8 currentTick;
 	u8 currentStep;
 	u8 modChannels;
@@ -523,14 +524,14 @@ void ProcessMusic(void){
 		
 				#if SONG_SPEED == 1
 					if(songSpeed != 0){
-						uint32_t l  = (uint32_t)(nextDeltaTime<<8);
+						u32 l  = (u32)(nextDeltaTime<<8);
 
 						if(songSpeed < 0){//slower
-							(uint32_t)(l += (uint32_t)(-songSpeed*(nextDeltaTime<<1)));
-							(uint32_t)(l >>= 8);
+							(u32)(l += (u32)(-songSpeed*(nextDeltaTime<<1)));
+							(u32)(l >>= 8);
 						}
 						else//faster
-							(uint32_t)(l /= (uint32_t)((1<<8)+(songSpeed<<1)));
+							(u32)(l /= (u32)((1<<8)+(songSpeed<<1)));
 
 						nextDeltaTime = l;
 					}
@@ -543,8 +544,10 @@ void ProcessMusic(void){
 		#elif MUSIC_ENGINE == STREAM
 		
 			//process all simultaneous events
+			//everything about this format is designed to minimize the size of the most common events
 			if(nextDeltaTime)//eat last frames delay
 				nextDeltaTime--;
+
 			while(!nextDeltaTime){
 				
 				if(SongBufBytes() < SONG_BUFFER_MIN){
@@ -552,61 +555,60 @@ void ProcessMusic(void){
 					break;
 				}
 				
-				if((c1=SongBufRead()) == 0xFF){//Song End or another command?
-					playSong = false;
+				c1 = SongBufRead();
+				
+				if(c1 == 0xFF){//future expansion
+					playSong = false;//we do not yet know number of argument bytes for these, so can't continue the stream
 					break;
-				}
+				}else if((c1 & 0b11100000) < 0b10100000){//0bCCCXXXXX, if (CCC>>5) is 0-4, then it is a Note On
+					//Note On: 0bCCCVVVVV, VNNNNNNN = CCC = channel, VVVVV V = volume, NNNNNNN = note
+					channel = (c1>>5);//get channel
+					c1 = (c1 & 0b00011111);//get volume 5 LSBits
+					c2 = SongBufRead();//get packed note and MSBit of volume
+					c1 |= (c2 & 0b10000000)>>2;//add 1 MSBit to previous LSBits for 6 bits total volume
+					c1 <<= 1;//convert 6 bit to 7 bit volume of original format
+					c2 &= 0b01111111;//mask out the MSbit of volume, leaving just the note
+					//c2 = note, c1 = volume
+					if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED)//allocated==true
+						TriggerNote(channel,tracks[channel].patchNo,c2,c1);
+				
+				}else{//"channel" is not actually the channel, but an indicator of the command
+					c2 = (c1 &	0b11100000);//determine the actual command type by the "channel" signal
 
-				if(c1 & 0b10000000){//Note On or Program Change
-					channel = (c1 &	0b01110000);
-					if(channel < 	0b01010000){//if channel is 0-4, then it is a Note On
-						if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED)//allocated==true
-							TriggerNote(channel,tracks[channel].patchNo,c1,c2);
-					}else{//"channel" > 4 indicates Program Change
-						channel = (c1 & 0b00001111);//extract actual channel(not the > 5 used for signal)
+					if(c2 ==	0b10100000){//"channel" == 5<<5 indicates Program Change
+						channel = (c1 & 0b00000111);//extract actual channel(not the 5 used for signal)
 						c2 = SongBufRead();//get patch
 						tracks[channel].patchNo = c2;
-					}
 					
-				}else{// not Note On or Program Change or Song End
-					if(c1 == 0b01110000){//Loop Start
-						loopStart = songPos;
-					}else if(c1 == 0b01110001){//Loop End
-						songPos = loopStart;
-					}else{//one of three possible forms for Tick End events or Expansion
-						if(	c1 == 0b01110011)//short form for 1 frame delay
-							nextDeltaTime++;
-						else if(c1 == 0b01110111)//short form for 2 frame delay
-							nextDeltaTime += 2;
-						else if(c1 == 0b01111011){//delay is specified in next byte
-							nextDeltaTime = SongBufferRead();
-						}else{//Expansion Command 0b01111111
-							c1 = SongBufRead();//controller and channel 0bCCC00XXX
-							channel = (c1 & 0b11100000)>>5;
-							c2 = SongBufRead();//controller value
-							switch(c1 & 0b111){
-								case 0b000://Channel Volume
-									tracks[channel].trackVol=c2<<1
-								break;
-
-								case 0b001://Expression
-									tracks[channel].expressionVol=c2<<1;
-								break;
-
-								case 0b010://Tremolo Volume
-									tracks[channel].tremoloLevel=c2<<1;
-								break;
-
-								case 0b011://Tremolo Rate
-									tracks[channel].tremoloRate=c2<<1;
-								break;
-
-								default://a controller we are not aware of
-									playSong = 0;
-									break;
-								break;							
-							}
+					}else if(c2 ==	0b11000000){//"channel" == 6<<5 indicates Marker						
+						c2 = (c1 & 0b00000011);
+						
+						if(c2 == 0b00000000){//Loop End(0b11000000)
+							loopEnd = songPos;
+							songPos = loopStart;
+						}else if(c2 == 0b00000001){//Loop Start(0b11000001)
+							loopStart = songPos;
+						}else if(c2 == 0b00000010){//Song End(0b11000010)
+							playSong = false;
+							break;
+						}else{//Tick End(0b110XXX11)
+							nextDeltaTime = ((c1 & 0b00011100)>>2)+1;//possibly short version 1-7 frames, 1 byte
+							if(nextDeltaTime == (0b00000111)+1)//longer version, 2 bytes
+								nextDeltaTime = SongBufRead();
 						}
+					}else{//c2 = 0b11100000 "channel" = 7<<5 indicates Controller Event
+						channel = (c1 & 0b00000111);//get the actual channel
+						c2 = (c1 & 0b00011000);//mask the controller type
+						c1 = SongBufRead();//get controller value
+						
+						if(c2 == 0b00000000)//Channel Volume
+							tracks[channel].trackVol=c1<<1;
+						else if(c2 == 0b00001000)//Expression
+							tracks[channel].expressionVol=c1<<1;
+						else if(c2 == 0b00010000)//Tremolo Volume
+							tracks[channel].tremoloLevel=c1<<1;
+						else//c2 = 0b00011000//Tremolo Rate
+							tracks[channel].tremoloRate=c1<<1;
 					}
 				}
 		
@@ -615,14 +617,14 @@ void ProcessMusic(void){
 						continue;
 
 					if(songSpeed != 0){
-						uint32_t l  = (uint32_t)(nextDeltaTime<<8);
+						u32 l  = (u32)(nextDeltaTime<<8);
 
 						if(songSpeed < 0){//slower
-							(uint32_t)(l += (uint32_t)(-songSpeed*(nextDeltaTime<<1)));
-							(uint32_t)(l >>= 8);
+							(u32)(l += (u32)(-songSpeed*(nextDeltaTime<<1)));
+							(u32)(l >>= 8);
 						}
 						else//faster
-							(uint32_t)(l /= (uint32_t)((1<<8)+(songSpeed<<1)));
+							(u32)(l /= (u32)((1<<8)+(songSpeed<<1)));
 
 						nextDeltaTime = l;
 					}
@@ -865,30 +867,7 @@ unsigned int ReadVarLen(const char **songPos)
     return value;
 }
 
-#elif MUSIC_ENGINE == MOD
-
-
-
-#else //STREAM
-
-unsigned int ReadVarLen()
-{
-    unsigned int value;
-    unsigned char c;
-
-
-    if ( (value = SongBufRead()) & 0x80 )
-    {
-       value &= 0x7F;
-       do
-       {
-         value = (value << 7) + ((c = SongBufRead()) & 0x7F);
-       } while (c & 0x80);
-    }
-
-
-    return value;
-}
+#elif MUSIC_ENGINE == STREAM
 
 
 u8 SongBufFull(){
@@ -913,7 +892,7 @@ void SongBufWrite(u8 t){//writes a byte into the circular buffer
 
 u8 SongBufRead(){
 	
-	uint8_t t = songBuf[songBufOut];
+	u8 t = songBuf[songBufOut];
 	songBufOut = ((songBufOut+1)%sizeof(songBuf));
 	songPos++;
 	return t;
