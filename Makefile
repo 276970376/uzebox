@@ -16,6 +16,7 @@ TOOLS += uzem
 TOOLS += packrom
 TOOLS += gconvert
 TOOLS += bin2hex
+TOOLS += mconvert
 
 # Builds out-of-the-box on Linux, OS X, and Windows
 # but requires C++11 support, so you may need to
@@ -49,6 +50,7 @@ DEMOS += Mode13ExtendedDemo
 DEMOS += MusicDemo 	
 DEMOS += LodeRunner
 DEMOS += SDCardDemo
+DEMOS += SDMusicDemo
 DEMOS += SpriteDemo	
 DEMOS += SuperMarioDemo
 DEMOS += tutorial
