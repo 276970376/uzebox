@@ -41,8 +41,11 @@ extern volatile u16 songPos;
 extern volatile u16 loopStart;
 extern volatile u16 loopEnd;
 u16 loopEndFound;
-
+u16 bufferLimiter;
+u16 bpfLimiter;
 long sectorStart;
+
+u16 padState, oldPadState;
 
 int main(){
 	InitMusicPlayer(patches);
@@ -62,19 +65,35 @@ int main(){
 	}
 	sdInUse = 0;
 
-	while(!SongBufFull()){
-		//SongBufWrite(sdCardGetByte());songOff++;
-		SongBufWrite(pgm_read_byte(&CompressedSong[songOff++]));
-	}
-//	songOff = 0;
+	bufferLimiter = 14;//let the user simulate different buffer sizes in real time
+	bpfLimiter = 4;//let the user simulate different fill speeds
 
+	while(!SongBufFull() && (SongBufBytes() < bufferLimiter)){
+		SongBufWrite(sdCardGetByte());songOff++;
+		//SongBufWrite(pgm_read_byte(&CompressedSong[songOff++]));
+	}
 
 	StartSong();
-//TriggerFx(0,255,1);
+
 	u16 counter = 0;
 	sdInUse = 0;
 
 	while(1){
+		oldPadState = padState;
+		padState = ReadJoypad(0);
+
+		if(padState & BTN_UP && !(oldPadState & BTN_UP) && bufferLimiter < SONG_BUFFER_SIZE)
+			bufferLimiter++;
+		if(padState & BTN_DOWN && !(oldPadState & BTN_DOWN) && bufferLimiter > SONG_BUFFER_MIN)
+			bufferLimiter--;
+
+		if(padState & BTN_LEFT && !(oldPadState & BTN_LEFT) && bpfLimiter)
+			bpfLimiter--;
+
+		if(padState & BTN_RIGHT && !(oldPadState & BTN_RIGHT) && bpfLimiter < bufferLimiter)
+			bpfLimiter++;
+
+
 		Print(0,2,PSTR("SONGPOS  :"));
 		PrintInt(14,2,songPos,1);
 
@@ -86,8 +105,15 @@ int main(){
 
 		Print(0,6,PSTR("BUFFERED :"));
 		PrintInt(14,6,SongBufBytes(),1);
-		Print(0,7,PSTR("CAPACITY :"));
-		PrintInt(14,7,SONG_BUFFER_SIZE,1);
+
+		Print(0,7,PSTR("FILL RATE:"));
+		PrintInt(14,7,bpfLimiter,1);
+
+		Print(0,8,PSTR("BUF LIMIT:"));
+		PrintInt(14,8,bufferLimiter,1);
+
+		Print(0,9,PSTR("MAX SIZE :"));
+		PrintInt(14,9,SONG_BUFFER_SIZE,1);
 
 		CustomWaitVsync(1);
 	/*	if(false && ++counter == 60*2){//time to do something else with the SD card
@@ -110,21 +136,20 @@ int main(){
 void CustomWaitVsync(u8 frames){//we do a best effort to keep up to the demand of the song player
 	while(frames){
 		if(loopEnd){//we read past the end of the song..luckily it is padded with bytes from the loop start
-			//songPos = (songPos-loopEnd)+loopStart;
 			loopEndFound = loopEnd;//just to display it once found(not needed for games)
-			loopEnd = 0;//since we immediately zero it so we don't keep doing it
 			songOff = (songOff-loopEnd)+loopStart;
-//sdCardStopTransmission();
-//sdCardCueByteAddress((sectorStart*512UL)+songOff);
-			
+			loopEnd = 0;//since we immediately zero it so we don't keep doing it
+			sdCardStopTransmission();
+			sdCardCueByteAddress((sectorStart*512UL)+songOff);
 		}
- 	
+
+		u8 total_bytes = 0;
 		while(!GetVsyncFlag()){//try to use cycles that we would normally waste
-//TriggerFx(1,255,1);
 			if(!sdInUse){//we are clear to use the SD card, the other section has restored our offset
-				if(!SongBufFull()){
-					//SongBufWrite(sdCardGetByte());songOff++;
-					SongBufWrite(pgm_read_byte(&CompressedSong[songOff++]));
+				if(!SongBufFull() && SongBufBytes() < bufferLimiter && total_bytes < bpfLimiter){
+					SongBufWrite(sdCardGetByte());songOff++;
+					//SongBufWrite(pgm_read_byte(&CompressedSong[songOff++]));
+					total_bytes++;				
 				}			
 			}
 		}
