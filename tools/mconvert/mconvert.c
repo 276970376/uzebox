@@ -36,6 +36,7 @@ int asBin;
 int asPipe;
 int doPad;
 int doDebug;
+int doLength;
 int doCustomName;
 char arrayName[64];
 long ctrFilter;
@@ -73,6 +74,7 @@ int main(int argc, char *argv[]){
 		printf("\t\t\t-o : output to a specific offset in the file(binary mode)\n");
 		printf("\t\t\t-n : specify the output array name(text mode only)\n");
 		printf("\t\t\t-d : output in debug mode(C array of binary values)\n");
+		printf("\t\t\t-s : prepends a 2 byte data length value to the ouptput\n");
 		printf("\t\t\t-f : apply a (bit flag)filter on controller events:\n");
 		printf("\t\t\t\t1 : remove Channel Volume controllers\n");
 		printf("\t\t\t\t2 : remove Expression controllers\n");
@@ -93,6 +95,8 @@ int main(int argc, char *argv[]){
 			doPad = 1;
 		else if(!strcmp(argv[i],"-d"))/* debug output mode */
 			doDebug = 1;
+		else if(!strcmp(argv[i],"-s"))/* prepend data length(16 bits) */
+			doLength = 1;
 		else if(!strcmp(argv[i],"-o")){/* explicit output offset */
 			if(i == argc-1){
 				printf("Error: no offset specified for -o flag\n");
@@ -336,6 +340,10 @@ w = 0;
 
 	if(!asPipe){
 		if(asBin){
+			if(doLength){/* prepend the total data size before the song data(useful for loading to SPI ram) */
+				fputc((outSize>>8)&0xFF,fout);
+				fputc(outSize&0xFF,fout);
+			}
 			for(i=0;i<outSize;i++)/* output the actual data, text or binary, and any offset were already setup prior */
 				fputc(outBuf[i],fout);
 		}else{/* C array */
@@ -365,8 +373,9 @@ w = 0;
 			printf("\tOutput data size: %d\n",outSize);
 		else
 			printf("\tOutput data size: %d(+%d loop)\n",outSize-sizeof(loopBuf),sizeof(loopBuf));	
-			printf("\tAverage bytes per frame: %ld\n",(outSize/runTime));
-			printf("\tAverage bytes per second: %ld\n",(outSize/(runTime/60)));		
+		
+		printf("\tAverage bytes per frame: %ld\n",(outSize/runTime));
+		printf("\tAverage bytes per second: %ld\n",(outSize/(runTime/60)));		
 	
 	}else{/* output the data directly to stdout, for piping */
 		for(i=0;i<outSize;i++)
