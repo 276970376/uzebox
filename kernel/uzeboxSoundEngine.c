@@ -566,7 +566,7 @@ void ProcessMusic(void){
 					c1 = (c1 & 0b00011111);//get volume 5 LSBits
 					c2 = SongBufRead();//get packed note and MSBit of volume
 					c1 |= (c2 & 0b10000000)>>2;//add 1 MSBit to previous LSBits for 6 bits total volume
-					c1 <<= 1;//convert 6 bit to 7 bit volume of original format
+					c1 <<= 2;//convert our 6 bits to: 7 bit converted to 8 bit volume of original format
 					c2 &= 0b01111111;//mask out the MSbit of volume, leaving just the note
 					//c2 = note, c1 = volume
 					if(tracks[channel].flags|TRACK_FLAGS_ALLOCATED)//allocated==true
