@@ -37,6 +37,10 @@ data to their project.
 	bit values will filter certain events from the output stream. This can have the effect of
 	making output files smaller and cleaner, as well as higher performance when played back.
 
+	-s This command will prepend a 16 byte value representing the data length, to the output
+	data. This is useful for situations where you need to know the length of data to transfer
+	to another medium.
+
 
 
 
