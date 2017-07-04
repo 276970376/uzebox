@@ -65,13 +65,14 @@ int main(){
 	}
 	sdInUse = 0;
 
-	bufferLimiter = 14;//let the user simulate different buffer sizes in real time
-	bpfLimiter = 4;//let the user simulate different fill speeds
+	bufferLimiter = 64;//let the user simulate different buffer sizes in real time
+	bpfLimiter = 16;//let the user simulate different fill speeds
 
-	while(!SongBufFull() && (SongBufBytes() < bufferLimiter)){
+	/*while(!SongBufFull() && (SongBufBytes() < bufferLimiter)){
 		SongBufWrite(sdCardGetByte());songOff++;
 		//SongBufWrite(pgm_read_byte(&CompressedSong[songOff++]));
-	}
+	}*/
+	CustomWaitVsync(60);
 
 	StartSong();
 
