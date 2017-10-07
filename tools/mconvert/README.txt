@@ -6,41 +6,31 @@ the original. The main aim of this program is to increase the efficiency of the 
 music system, in that there is less data that must be buffered therefore requiring less buffer
 and less cycles to fill that buffer(ie. SD access).
 
-There are a number of command lines supported which mean to aid developers easily integrate the
-data to their project.
+The only argument is the filename that will be used to described the desired conversion(s). Each
+line specifies an individual conversion. It is important to follow the format and not include extra
+line endings, commas, etc. The tool will handle some small deviances but it's not worth pushing.
+You can comment out a line by making the first character on the line a '#'. All characters will be
+ignored on a comment line until after the first \n encountered(should support Windows\Unix style).
+Any line that is not a setup or entry line, MUST CONTAIN '#' as the first character on the line.
+Example:
+# put some comments here if desired
+1,512,1,MUSIC.DAT,
+# the above line is the setup line, which dictates how the data will be handled
+../data/song1.inc,0,
+# the above is an entry line, you can have as many as you need
+../data/song2.inc,0,
+../data/song3.inc,0,
+#end of config
 
-	-p This will output all the song data in hex(0xXX) format, comma seperated. No statistics
-	will be displayed afterward. There may be no use for this, but someone might desire to
-	pipe the data to other tools they use without a file intermediary.
-
-	-b This changed the output to binary mode, where values encoded as 1 byte are written.
-	The output can be put into an existing file, at any offset. This is primarily intended
-	to make developing resource files to place on the SD card, to later stream music from.
-	Only raw data is output, no C array details, commas, etc.
-
-	-a This command makes the output data always be a multiple of 512(sector size) bytes.
-	It may be useful for those building SD resources, to make visibility easier when viewing
-	from within a hex editor.
-
-	-o For binary mode, this specifies the offset to put the output data. This option is not
-	useful or supported in the default text mode. This allows developers to build files to 
-	place on the SD card.
-
-	-n For text mode, specifies the name of the output C array.
-
-	-d This is primarily intended at testing and feature development for the streaming music
-	system. This will output a C array(text mode) with binary 0bXXXXXXXX, comma seperated bytes.
-	This allows a user to manually read through the data easier and investigate events based on
-	bit patterns.
-
-	-f This is a controller event filter. The following byte will indicate a number for which the
-	bit values will filter certain events from the output stream. This can have the effect of
-	making output files smaller and cleaner, as well as higher performance when played back.
-
-	-s This command will prepend a 16 byte value representing the data length, to the output
-	data. This is useful for situations where you need to know the length of data to transfer
-	to another medium.
-
+The explanation of this file is as follows:
+#binary, directory starting at 0, output starting at 512, pad song size to an even multiple of 512(SD sector size), MUSIC.DAT for output file
+1,0,512,1,MUSIC.DAT,
+#
+#convert file mididata.inc, filter flags 15(no channel volume, expression, tremolo volume or rate), NULL arrayname(only valid for C array output)
+mididata.inc,15,NULL
+#
+#convert file mididata2.inc, no filter flags, NULL as we are in binary mode and not C array mode
+mididata2.inc,0,NULL
 
 
 
