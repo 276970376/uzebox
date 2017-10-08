@@ -14,7 +14,7 @@ ignored on a comment line until after the first \n encountered(should support Wi
 Any line that is not a setup or entry line, MUST CONTAIN '#' as the first character on the line.
 Example:
 # put some comments here if desired
-1,512,1,MUSIC.DAT,
+1,0,512,1,MUSIC.DAT,
 # the above line is the setup line, which dictates how the data will be handled
 ../data/song1.inc,0,
 # the above is an entry line, you can have as many as you need
