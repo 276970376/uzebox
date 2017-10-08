@@ -48,7 +48,9 @@ long outOff;
 long fileOff;
 long dirOff;
 long runTime;
+long minSize;
 long flashCost;
+long totalFlashCost;
 int inSize,outSize,cfgSize,cfgLine,cfgEntry;
 unsigned char inBuf[1024*128];
 unsigned char outBuf[1024*128];
@@ -112,15 +114,15 @@ int main(int argc, char *argv[]){
 		goto ERROR;
 	}
 
-	printf(asBin ? "\nBinary output,":"\nC array output");
+	printf(asBin ? "\n\tBinary output, ":"\n\tC array output");
 	if(asBin)
-		printf("directory at %ld, starting at offset %ld, to %s\n",dirOff,fileOff,foutName);
+		printf("directory at %ld, data at  %ld, to %s:\n",dirOff,fileOff,foutName);
 	else
-		printf(" to %s\n",foutName);
+		printf(" to %s:\n",foutName);
 
 	fout = fopen(foutName,asBin ? "rb+":"w");/* non-binary destroys any previous C array output */
 	if(fout == NULL){/* file does not exist, try to create it. */
-		printf("Binary output file does not exist");
+		printf("\tBinary output file does not exist");
 		if(asBin){
 			fout = fopen(foutName,"wb");
 			if(fout == NULL){
@@ -152,12 +154,12 @@ int main(int argc, char *argv[]){
 			if(asBin)
 				printf(", %ld bytes file size\n",fileOff);
 			else
-				printf(", %ld bytes(total flash cost)\n",flashCost);
+				printf(", %ld bytes(total flash cost)\n",totalFlashCost);
 			goto DONE;
 		}
 
-
-		if(sscanf(lineBuf," %255[^ ,\t] , %d ,  %255[^ ,\t] %n",finName,&ctrFilter,arrayName,&eat) != 3){
+		sprintf(arrayName,"song%d",cfgEntry);
+		if(sscanf(lineBuf," %255[^ ,\t] , %d ,  %32[^ ,\t] %n",finName,&ctrFilter,arrayName,&eat) != 3){
 			if(lineBuf[0] == '\r' || lineBuf[0] == '\n'){/* user entered an extra line end after the entries, eat it */
 				continue;
 			}else if(lineBuf[0] == '#'){//eat the comment line
@@ -177,7 +179,6 @@ int main(int argc, char *argv[]){
 		}
 
 		cfgEntry++;
-
 		printf("\t+= %s,filter:%d,offset:%ld\n",finName,ctrFilter,fileOff);
 
 		fin = fopen(finName,"r");
@@ -196,9 +197,9 @@ int main(int argc, char *argv[]){
 
 	goto DONE;
 ERROR:
-	exit(0);
-DONE:	
 	exit(1);
+DONE:	
+	exit(0);
 }
 
 
@@ -214,6 +215,7 @@ int ConvertAndWrite(){
 	runTime = 0;
 	foundSongEnd = 0;
 	channel = 0;
+	flashCost = 0;
 
 	while(fgetc(fin) != '{' && !feof(fin));/* eat everything up to the beginning of the array data */
 
@@ -378,10 +380,13 @@ int ConvertAndWrite(){
 
 	if(asBin){
 		fseek(fout,dirOff,SEEK_SET);/* write the directory entry for this song */
-		fputc((fileOff>>24)&0xFF,fout);
-		fputc((fileOff>>16)&0xFF,fout);
-		fputc((fileOff>>8)&0xFF,fout);
-		fputc((fileOff>>0)&0xFF,fout);
+		/* the byte order matches what is expected by SpiRamReadU32() */
+		fputc(((unsigned char)(fileOff>>0)&0xFF),fout);
+		fputc(((unsigned char)(fileOff>>8)&0xFF),fout);
+		fputc(((unsigned char)(fileOff>>16)&0xFF),fout);
+		fputc(((unsigned char)(fileOff>>24)&0xFF),fout);
+
+
 		dirOff += 4;
 
 		fseek(fout,fileOff,SEEK_SET);
@@ -396,9 +401,9 @@ int ConvertAndWrite(){
 		}
 
 	}else{/* C array */
-		fprintf(fout,"const char %s[] PROGMEM = {\n",arrayName);
+		fprintf(fout,"const char %s[] PROGMEM = {/* %s */\n",arrayName,finName);
 		w = 0;
-		for(i=0;i<outSize;i++){
+		for(i=0;i<outSize-padBytes;i++){/* user added padding for C version? Seems no use, assume it is in error and override. */
 			if(!doDebug)
 				fprintf(fout,"0x%02X,",outBuf[i]);
 			else{
@@ -414,7 +419,10 @@ int ConvertAndWrite(){
 			}
 			flashCost++;
 		}
-		fprintf(fout,"\n};\n");
+		if(w != 0)/* make formatting nicer */
+			fprintf(fout,"\n");
+		fprintf(fout,"};/* %ld bytes total */\n\n",flashCost);
+		totalFlashCost += flashCost;
 	}
 	/* display statistics */
 	printf("\t\tRun time: %ld seconds\n",(runTime/60));
@@ -430,8 +438,8 @@ int ConvertAndWrite(){
 		else
 			printf("\t\tOutput data size: %ld\n",flashCost);//C array is meant for non-buffered player(save space)
 	}
-	printf("\t\tAverage bytes per frame: %ld\n",(long)((outSize-padBytes)/runTime));
-	printf("\t\tAverage bytes per second: %ld\n\n",(long)((outSize-padBytes)/(runTime/60)));
+	printf("\t\tAverage bytes per frame: %f\n",(((double)outSize-(double)padBytes)/(double)runTime));
+	printf("\t\tAverage bytes per second: %f\n\n",((((double)outSize-(double)padBytes)/((double)runTime/60))));
 
 	return 1;
 }
