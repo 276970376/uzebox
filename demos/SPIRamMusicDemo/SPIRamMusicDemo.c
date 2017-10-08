@@ -23,9 +23,7 @@
 #include <stdlib.h>
 #include <avr/pgmspace.h>
 #include <uzebox.h>
-//#include "data/tiles.inc"
 #include "data/font-8x8.inc"
-//#include "data/compressedsong.inc"
 #include "data/patches.inc"
 #include <sdBase.h>
 #include <spiram.h>
@@ -42,16 +40,17 @@ extern bool playSong;
 extern volatile u16 songPos;
 extern volatile u16 loopStart;
 extern volatile u16 loopEnd;
-extern Track tracks[CHANNELS];
+////////extern Track tracks[CHANNELS];
 extern u8 ram_tiles[];
 u8 songNum;
-extern u16 songStalls;
+extern volatile u16 songStalls;
 extern u8 songBufIn,songBufOut;
 u16 loopEndFound;
 u16 bufferLimiter;
 u16 bpfLimiter;
 u32 songBase;
 u8 doSongBuffer;
+u8 songCount;
 long sectorStart;
 
 
@@ -65,28 +64,42 @@ int main(){
 	InitMusicPlayer(patches);
 	SetTileTable(font);
 	ClearVram();
+	SetMasterVolume(192);
 
 	sdCardInitNoBuffer();
 	SpiRamInit();
 
-	if((sectorStart = sdCardFindFileFirstSectorFlash(fileName)) == 0){
+	sectorStart = sdCardFindFileFirstSectorFlash(fileName);
+	if(sectorStart == 0){//(sectorStart = sdCardFindFileFirstSectorFlash(fileName)) == 0){
 		Print(0,0,PSTR("FILE SD_MUSIC.DAT NOT FOUND ON SD CARD"));
 		while(1);	
 	}
 
+	WaitVsync(1);
 	//load all music resources from the SD card into SPI ram
 	SetRenderingParameters(FRAME_LINES-10,8);//decrease the number of drawn scanlines for more free cycles to load data
-	for(uint16_t i=0;i<32*2;i++){//load 512 bytes at a time from SD into ram, then from ram into SPI ram, for a total of 32K or 64 sectors
+	for(uint16_t i=0;i<24*2;i++){//load 512 bytes at a time from SD into ram, then from ram into SPI ram, for a total of 32K or 64 sectors
 
-		sdCardCueSectorAddress(sectorStart+i);
+		sdCardCueSectorAddress((long)(sectorStart+i));
+		//for(uint16_t j=0;j<512;j++)
+		//	vram[j+256] = sdCardGetByte();		
 		sdCardDirectReadSimple(vram+256,512);
 		sdCardStopTransmission();
- 		SpiRamWriteFrom((i*512)>>16,(i*512)&0xFF,vram+256,512);
+
+ 		SpiRamWriteFrom((long)((i*512))>>16,((long)i*512)&0xFFFF,vram+256,512);
 	}
 	ClearVram();//clear the gibberish we wrote over vram
 	SetRenderingParameters(FIRST_RENDER_LINE,FRAME_LINES);//increase the number of drawn scanlines so the whole screen shows
+	
+	for(uint8_t i=0;i<255;i++){
+		if(SpiRamReadU32(0,i*4) == 0)
+			break;
+		songCount++;
+	}
 
-
+	//SONGNUM  :65535 SONGPOS :289
+	//LOOPSTART:65535 LOOPEND :5530
+	//SONGSPEED:00000 SONGBASE:
 	Print(0,0,PSTR("SONGNUM  :"));
 	Print(0,1,PSTR("SONGPOS  :"));
 	Print(0,2,PSTR("SONGSPEED:"));
@@ -103,14 +116,24 @@ int main(){
 	bufferLimiter = 16;//let the user simulate different buffer sizes in real time
 	bpfLimiter = 16;//let the user simulate different fill speeds(for SPI ram it is likely ok to have it always fill the buffer fully)
 	songSpeed = 0;
-	songBase = SpiRamReadU32(0,0);//read the first entry from the directory, this is the offset to the first song
-PrintInt(20,10,songBase,1);
-while(1);
-	SpiRamSeqReadStart(songBase>>16,songBase&0xFF);//make our buffering code start at the first byte of the song
-	WaitVsync(1);
+//if(SPiRamReadU32(0,0) != 0x1000)
+//SpiRamWriteU32(0,0,0x20);
+//PrintHexInt(10,10,SpiRamReadU32(0,1));
+//PrintHexByte(10,10,SpiRamReadU8(0,0));
+//PrintHexByte(10,11,SpiRamReadU8(0,1));
+//PrintHexByte(10,12,SpiRamReadU8(0,2));
+//PrintHexByte(10,13,SpiRamReadU8(0,3));
+
+songBase = SpiRamReadU32(0,0);
+//PrintHexInt(10,15,songBase>>16);
+//PrintHexInt(14,15,songBase&0xFFFF);
+//	while(1);
+
+	SpiRamSeqReadStart(songBase>>16,songBase&0xFFFF);//make our buffering code start at the first byte of the song
+	//WaitVsync(1);
 	doSongBuffer = 1;//let the CustomWaitVsync() fill the buffer. We did not want it to do that before, since it would be reading the directory
 	CustomWaitVsync(2);//let it buffer some data
-	/////////songStalls = 0;//the first CustomWaitVsync() will detect a stall, but that doesn't count because we weren't going yet
+	songStalls = 0;//the first CustomWaitVsync() will detect a stall, but that doesn't count because we weren't going yet
 	StartSong();//start the song now that we have some data
 
 	for(uint8_t j=0;j<64;j++){//load up some graphics for coloring
@@ -141,19 +164,17 @@ while(1);
 			songSpeed++;
 
 		if(padState & BTN_SELECT && !(oldPadState & BTN_SELECT)){
-			songBufIn = songBufOut = 0;
-			songOff = songBase;
+			StopSong();			
 			SpiRamSeqReadEnd();
-			SpiRamSeqReadStart(songBase>>16,songBase&0xFF);
-			StartSong();
-			/*if(++songNum > 2)
+			songBufIn = songBufOut = 0;
+			loopEndFound = 0;
+			if(++songNum >= songCount)
 				songNum = 0;
-			SpiRamSeqReadEnd();//end the sequential read we were using to fill the buffer
-			songBase = SpiRamReadU16(0,songNum);//read the start of this song
-			SpiRamSeqReadStart(0,songBase);//start the sequential read again so buffering can happen
-			while(SongBufBytes())
-				SongBufRead();//eat any buffered bytes from the last song
-			StartSong();*/
+			songBase = SpiRamReadU32(((uint32_t)(songNum*4))>>16,(songNum*4)&0xFFFF);
+			songOff = 0;
+
+			SpiRamSeqReadStart(songBase>>16,songBase&0xFFFF);
+			StartSong();
 		}
 		
 		if(padState & BTN_B && !(oldPadState & BTN_B)){
@@ -184,28 +205,27 @@ void CustomWaitVsync(u8 frames){//we do a best effort to keep up to the demand o
 	while(frames){
 		if(loopEnd){//we read past the end of the song..luckily it is padded with bytes from the loop start
 			SpiRamSeqReadEnd();
-			loopEndFound = loopEnd;//just to display it once found(not needed for games)
+			loopEndFound = loopEnd;//for displaying it once found, since we will reset it(not needed for games)
 			songOff = (songOff-loopEnd)+loopStart;
-			loopEnd = 0;//since we immediately zero it so we don't keep doing it
-
-			//WaitVsync(1);//asm volatile("lpm\n\tlpm\n\t");
-			SpiRamSeqReadStart((songBase+songOff)>>16,(songBase+songOff)&0xFF);//read from the start of the song, plus the offset we already "read past"
+			loopEnd = 0;//we immediately zero it so we don't keep doing it
+			SpiRamSeqReadStart((songBase+songOff)>>16,(songBase+songOff)&0xFFFF);//read from the start of the song, plus the offset we already "read past"
 		}
 
 		u8 total_bytes = 0;
 		while(!GetVsyncFlag()){//try to use cycles that we would normally waste
 
 			if(false && streamPcmPos != 0xFFFFFF){//playing a PCM, this is simple code that is not necessarily safe in cycle intensive games
-		
+		/*
 				SpiRamSeqReadEnd();//stop the music read
- 				SpiRamReadInto((streamPcmPos>>16),(streamPcmPos&0xFF),(mix_buf+(mix_bank*262)),streamPcmSize<262?streamPcmSize:262);//read the PCM data into the sound buffer
+ 				SpiRamReadInto((streamPcmPos>>16),(streamPcmPos&0xFFFF),(mix_buf+(mix_bank*262)),streamPcmSize<262?streamPcmSize:262);//read the PCM data into the sound buffer
 				streamPcmPos += 262;//update our position into the PCM sound(only 15khz sounds, no frequency/note changes in this example)
 				if(streamPcmSize < 262){//sound is done
 					streamPcmSize = 0;
 					streamPcmPos = 0xFFFFFF;
 				}				
-				SpiRamSeqReadStart(songOff>>16,songOff&0xFF);//restore the SPI Ram to the state we found it in, so the music player can continue
-			}
+				SpiRamSeqReadStart(songOff>>16,songOff&0xFFFF);//restore the SPI Ram to the state we found it in, so the music player can continue
+*/		
+		}
 
 			if(doSongBuffer && !SongBufFull() && SongBufBytes() < bufferLimiter && total_bytes < bpfLimiter){
 				SongBufWrite(SpiRamSeqReadU8());
@@ -221,7 +241,8 @@ void CustomWaitVsync(u8 frames){//we do a best effort to keep up to the demand o
 
 
 void UpdateEqualizer(){
-return;
+//return;
+/*
 	for(uint8_t i=1;i<SCREEN_TILES_H-1;i++){
 		//avg = 0;
 		for(uint8_t j=0;j<9;j++)
@@ -238,18 +259,19 @@ return;
 			visualizerHigh[i]--;
 
 		
-		for(uint8_t j=0;j<17;j++){
-			if(visualizer[i] > j)
+		for(uint8_t j=0;j<17+0;j++){
+			if(visualizer[i]-0 > j)
 				vram[i+((SCREEN_TILES_V-1-j)*VRAM_TILES_H)] = 0;//RAM_TILES_COUNT+29;
 			else if(false)//visualizerHigh[i] > j)
 				vram[i+((SCREEN_TILES_V-1-j)*VRAM_TILES_H)] = 1;//RAM_TILES_COUNT+10;
-			else if(visualizerHigh[i] == j)
+			else if(visualizerHigh[i]-0 == j)
 				vram[i+((SCREEN_TILES_V-1-j)*VRAM_TILES_H)] = 2;//RAM_TILES_COUNT+3;
 			else
 				vram[i+((SCREEN_TILES_V-1-j)*VRAM_TILES_H)] = RAM_TILES_COUNT+0;
 		}
 
 	}
+*/
 }
 
 
