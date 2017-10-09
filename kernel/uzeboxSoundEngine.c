@@ -72,6 +72,9 @@ u8 step;
 
 	u8 songBuf[SONG_BUFFER_SIZE];
 	u8 songBufIn, songBufOut;
+#if STREAM_MUSIC_DEBUG == 1
+	volatile u16 songStalls;
+#endif
 
 	u8 SongBufFull();
 	u8 SongBufBytes();
@@ -551,6 +554,9 @@ void ProcessMusic(void){
 			while(!nextDeltaTime){
 				
 				if(SongBufBytes() < SONG_BUFFER_MIN){
+#if STREAM_MUSIC_DEBUG == 1
+					songStalls++;
+#endif
 					nextDeltaTime++;//we are running out of data, stretch the timing a bit		
 					break;
 				}
@@ -809,7 +815,7 @@ void ProcessMusic(void){
 				uVol=(uVol*track->envelopeVol)+0x100;
 				uVol>>=8;
 				
-				#if MUSIC_ENGINE == MIDI
+				#if MUSIC_ENGINE == MIDI || MUSIC_ENGINE == STREAM
 					uVol=(uVol*track->expressionVol)+0x100;
 					uVol>>=8;
 				#endif
@@ -817,12 +823,8 @@ void ProcessMusic(void){
 				uVol=(uVol*masterVolume)+0x100;
 				uVol>>=8;
 
-				if(track->tremoloLevel>0){
-					#if (INCLUDE_DEFAULT_WAVES != 0)
-						tmp=pgm_read_byte(&(waves[track->tremoloPos]));
-					#else
-						tmp=0;
-					#endif
+				if(track->tremoloLevel>0){					
+					tmp=pgm_read_byte(&(waves[track->tremoloPos]));
 					tmp-=128; //convert to unsigned
 
 					tVol=(track->tremoloLevel*tmp)+0x100;
@@ -874,16 +876,17 @@ unsigned int ReadVarLen(const char **songPos)
 #elif MUSIC_ENGINE == STREAM
 
 
-u8 SongBufFull(){
-	return(songBufOut == ((songBufIn+1)%sizeof(songBuf)));
-}
-
 
 u8 SongBufBytes(){
 	if(songBufIn > songBufOut)
 		return songBufIn-songBufOut;
 	else
 		return (songBufIn+sizeof(songBuf))-songBufOut;
+}
+
+
+u8 SongBufFull(){
+	return(songBufOut == ((songBufIn+1)%sizeof(songBuf)));
 }
 
 
@@ -921,7 +924,7 @@ void TriggerCommon(Track* track,u8 patch,u8 volume,u8 note){
 	track->note=note;
 	track->loopCount=0;
 
-#if MUSIC_ENGINE == MIDI
+#if MUSIC_ENGINE == MIDI || MUSIC_ENGINE == STREAM
 	track->expressionVol=DEFAULT_EXPRESSION_VOL;
 #endif
 
