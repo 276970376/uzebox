@@ -51,6 +51,7 @@ DEMOS += MusicDemo
 DEMOS += LodeRunner
 DEMOS += SDCardDemo
 DEMOS += SDMusicDemo
+DEMOS += SPIRamMusicDemo
 DEMOS += SpriteDemo	
 DEMOS += SuperMarioDemo
 DEMOS += tutorial
