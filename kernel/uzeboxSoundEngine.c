@@ -35,7 +35,16 @@
 #define DEFAULT_TRACK_VOL	0xff
 #define DEFAULT_EXPRESSION_VOL 0xff
 
+#define MIDI_NULL 0xfd
+
+unsigned int ReadVarLen(const char **songPos);
 void SetTriggerCommonValues(Track *track, u8 volume, u8 note);
+
+#if MIDI_IN == 1
+	static long received=0;
+	bool receivingSysEx=false;
+	unsigned char lastMidiInStatus;
+#endif 
 
 extern u8 waves[];
 extern u16 steptable[];
@@ -48,6 +57,9 @@ unsigned char lastStatus;
 unsigned char masterVolume;
 u8 songSpeed;
 u8 step;
+
+
+
 
 #if MUSIC_ENGINE == MIDI
 
@@ -68,18 +80,18 @@ u8 step;
 	volatile u16 loopEnd;
 
 	u8 nextDeltaTime;
-	//u16 currDeltaTime;
 
 	u8 songBuf[SONG_BUFFER_SIZE];
 	u8 songBufIn, songBufOut;
-#if STREAM_MUSIC_DEBUG == 1
-	volatile u16 songStalls;
-#endif
 
 	u8 SongBufFull();
 	u8 SongBufBytes();
 	void SongBufWrite(u8 t);
 	u8 SongBufRead();
+
+	#if STREAM_MUSIC_DEBUG == 1
+		volatile u16 songStalls;
+	#endif
 
 #else //MOD player
 
@@ -93,6 +105,7 @@ u8 step;
 	const u16 *patternOffsets;
 	const char *patterns;
 #endif
+
 		
 
 /*
@@ -279,6 +292,11 @@ void InitMusicPlayer(const Patch *patchPointersParam){
 
 	masterVolume=DEFAULT_MASTER_VOL;
 
+#if MIDI_IN == ENABLED
+	InitUartRxBuffer();
+	lastMidiInStatus=0;
+#endif
+
 	playSong=false;
 
 	//initialize default channels patches			
@@ -303,6 +321,7 @@ void InitMusicPlayer(const Patch *patchPointersParam){
 		}
 
 		songPos=song+1; //skip first delta-time
+
 		songStart=song+1;//skip first delta-time
 		loopStart=song+1;
 		nextDeltaTime=0;
@@ -378,6 +397,7 @@ void InitMusicPlayer(const Patch *patchPointersParam){
 
 
 
+
 void StopSong(){
 
 	for(u8 i=0;i<CHANNELS;i++){
@@ -400,6 +420,8 @@ void SetSongSpeed(u8 speed){
 u8 GetSongSpeed(){
 	return songSpeed;
 }
+
+
 
 
 void ProcessMusic(void){
@@ -456,6 +478,7 @@ void ProcessMusic(void){
 			
 				if(c1==0xff){
 					//META data type event
+
 					c1=pgm_read_byte(songPos++);
 
 				
@@ -593,6 +616,7 @@ void ProcessMusic(void){
 							loopEnd = songPos;
 							songPos = loopStart;
 						}else if(c2 == 0b00000001){//Loop Start(0b11000001)
+
 							loopStart = songPos;
 						}else if(c2 == 0b00000010){//Song End(0b11000010)
 							playSong = false;
@@ -727,6 +751,7 @@ void ProcessMusic(void){
 						}
 						
 					}
+
 					track->patternPos=patPos;										
 				}
 			}
@@ -754,9 +779,7 @@ void ProcessMusic(void){
 	
 		#endif
 
-
 	}//end if(playSong)
-
 
 
 
@@ -823,8 +846,12 @@ void ProcessMusic(void){
 				uVol=(uVol*masterVolume)+0x100;
 				uVol>>=8;
 
-				if(track->tremoloLevel>0){					
-					tmp=pgm_read_byte(&(waves[track->tremoloPos]));
+				if(track->tremoloLevel>0){
+					#if (INCLUDE_DEFAULT_WAVES != 0)
+						tmp=pgm_read_byte(&(waves[track->tremoloPos]));
+					#else
+						tmp=0;
+					#endif
 					tmp-=128; //convert to unsigned
 
 					tVol=(track->tremoloLevel*tmp)+0x100;
@@ -851,7 +878,6 @@ void ProcessMusic(void){
 }
 
 
-
 #if MUSIC_ENGINE == MIDI
 
 unsigned int ReadVarLen(const char **songPos)
@@ -875,15 +901,12 @@ unsigned int ReadVarLen(const char **songPos)
 
 #elif MUSIC_ENGINE == STREAM
 
-
-
 u8 SongBufBytes(){
 	if(songBufIn > songBufOut)
 		return songBufIn-songBufOut;
 	else
 		return (songBufIn+sizeof(songBuf))-songBufOut;
 }
-
 
 u8 SongBufFull(){
 	return(songBufOut == ((songBufIn+1)%sizeof(songBuf)));
@@ -906,7 +929,6 @@ u8 SongBufRead(){
 }
 
 #endif
-
 
 
 

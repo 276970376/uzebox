@@ -98,17 +98,14 @@
 		extern void StartSong(const char *midiSong);
 	#elif MUSIC_ENGINE == STREAM
 		extern void StartSong();
-		extern void SongBufWrite(u8 data);
-		extern u8 SongBufRead();
 		extern u8 SongBufBytes();
 		extern u8 SongBufFull();
-		#ifndef SONG_BUFFER_SIZE	
-			#define SONG_BUFFER_SIZE	32
+		extern u8 SongBufRead();
+		extern void SongBufWrite(u8 t);
+		#ifndef SONG_BUF_MIN
+			#define SONG_BUFFER_MIN 2
 		#endif
-		#ifndef SONG_BUFFER_MIN
-			#define SONG_BUFFER_MIN		2
-		#endif
-	#else // MOD
+	#else
 		extern void StartSong(const char *song, u16 startPos, bool loop);
 	#endif
 	extern void ResumeSong();
