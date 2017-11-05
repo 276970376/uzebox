@@ -115,9 +115,12 @@ int main(int argc, char *argv[]){
 	}
 
 	printf(asBin ? "\n\tBinary output, ":"\n\tC array output");
-	if(asBin)
-		printf("directory at %ld, data at  %ld, to %s:\n",dirOff,fileOff,foutName);
-	else
+	if(asBin){
+		if(dirOff >= 0)
+			printf("directory at %ld, data at  %ld, to %s:\n",dirOff,fileOff,foutName);
+		else
+			printf("directory output disabled\n");
+	}else
 		printf(" to %s:\n",foutName);
 
 	fout = fopen(foutName,asBin ? "rb+":"w");/* non-binary destroys any previous C array output */
@@ -219,7 +222,7 @@ int ConvertAndWrite(){
 
 	while(fgetc(fin) != '{' && !feof(fin));/* eat everything up to the beginning of the array data */
 
-	if(feof(fin))/* got the the end of the file without seeing the opening bracket of the array */
+	if(feof(fin))/* got to the end of the file without seeing the opening bracket of the array */
 		return -1;
 
 	while(fscanf(fin," 0%*[xX]%x , ",&i) == 1)
@@ -379,12 +382,16 @@ int ConvertAndWrite(){
 		}
 
 	if(asBin){
-		fseek(fout,dirOff,SEEK_SET);/* write the directory entry for this song */
-		/* the byte order matches what is expected by SpiRamReadU32() */
-		fputc(((unsigned char)(fileOff>>0)&0xFF),fout);
-		fputc(((unsigned char)(fileOff>>8)&0xFF),fout);
-		fputc(((unsigned char)(fileOff>>16)&0xFF),fout);
-		fputc(((unsigned char)(fileOff>>24)&0xFF),fout);
+		if(dirOff >= 0){//user can omit directory information by passing a negative offset
+			fseek(fout,dirOff,SEEK_SET);/* write the directory entry for this song */
+			/* the byte order matches what is expected by SpiRamReadU32() */
+			fputc(((unsigned char)(fileOff>>0)&0xFF),fout);
+			fputc(((unsigned char)(fileOff>>8)&0xFF),fout);
+			fputc(((unsigned char)(fileOff>>16)&0xFF),fout);
+			fputc(((unsigned char)(fileOff>>24)&0xFF),fout);
+
+			dirOff += 4;
+		}
 
 
 		dirOff += 4;
