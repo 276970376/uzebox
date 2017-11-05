@@ -393,9 +393,6 @@ int ConvertAndWrite(){
 			dirOff += 4;
 		}
 
-
-		dirOff += 4;
-
 		fseek(fout,fileOff,SEEK_SET);
 		if(doLength){/* prepend the total data size before the song data(useful for loading to SPI ram) */
 			fputc((outSize>>8)&0xFF,fout);
